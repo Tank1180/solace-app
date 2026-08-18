@@ -1,0 +1,32 @@
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  background: #F5F7F7;
+  color: #1A1C1C;
+}
+
+a { color: #3A7CA5; }
+
+button {
+  cursor: pointer;
+  background: #2F6F4E;
+  color: #FFFFFF;
+  border: none;
+  border-radius: 6px;
+  padding: 8px 14px;
+  font-size: 0.9rem;
+}
+
+button:hover { background: #1E4A33; }
+button:disabled { background: #9DA2A0; cursor: not-allowed; }
+
+input, select {
+  padding: 8px 10px;
+  border: 1px solid #E1E4E3;
+  border-radius: 6px;
+  font-size: 0.9rem;
+  background: #FFFFFF;
+  color: #1A1C1C;
+}
