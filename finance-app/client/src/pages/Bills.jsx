@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import api from '../api/client';
 import { formatMoney } from '../utils/format';
 
@@ -19,6 +19,12 @@ const RECURRENCE_UNITS = [
   { value: 'yearly', label: 'Yearly' },
 ];
 
+const RECURRENCE_END_TYPES = [
+  { value: 'billing_cycles', label: 'Number of billing cycles' },
+  { value: 'until_date', label: 'Until this date' },
+  { value: 'until_stopped', label: 'Until stopped' },
+];
+
 const currentMonth = new Date().toISOString().slice(0, 7);
 const today = new Date().toISOString().slice(0, 10);
 
@@ -29,14 +35,9 @@ const emptyBillForm = {
   amount: '',
   dueDate: today,
   recurrenceUnit: 'monthly',
-  recurrenceCount: 1,
-  notes: '',
-};
-
-const emptyPayForm = {
-  billId: '',
-  paymentDate: today,
-  amount: '',
+  recurrenceCount: 12,
+  recurrenceEndType: 'until_stopped',
+  recurrenceEndDate: '',
   notes: '',
 };
 
@@ -47,15 +48,9 @@ export default function Bills() {
   const [alerts, setAlerts] = useState([]);
   const [monthlySummary, setMonthlySummary] = useState(null);
   const [billForm, setBillForm] = useState(emptyBillForm);
-  const [payForm, setPayForm] = useState(emptyPayForm);
   const [editingId, setEditingId] = useState(null);
   const [error, setError] = useState('');
   const [message, setMessage] = useState('');
-
-  const selectedBill = useMemo(
-    () => bills.find((bill) => String(bill.id) === String(payForm.billId)) || null,
-    [bills, payForm.billId]
-  );
 
   const load = useCallback(async () => {
     setError('');
@@ -82,7 +77,17 @@ export default function Bills() {
           ...current,
           billType: value,
           recurrenceUnit: value === 'recurring' ? current.recurrenceUnit : 'monthly',
-          recurrenceCount: value === 'recurring' ? current.recurrenceCount : 1,
+          recurrenceCount: value === 'recurring' ? current.recurrenceCount : 12,
+          recurrenceEndType: value === 'recurring' ? current.recurrenceEndType : 'until_stopped',
+          recurrenceEndDate: value === 'recurring' ? current.recurrenceEndDate : '',
+        };
+      }
+      if (field === 'recurrenceEndType') {
+        return {
+          ...current,
+          recurrenceEndType: value,
+          recurrenceEndDate: value === 'until_date' ? current.recurrenceEndDate : '',
+          recurrenceCount: value === 'billing_cycles' ? current.recurrenceCount || 12 : current.recurrenceCount,
         };
       }
       return { ...current, [field]: value };
@@ -98,7 +103,9 @@ export default function Bills() {
       amount: bill.amount ?? '',
       dueDate: bill.due_date || today,
       recurrenceUnit: bill.recurrence_unit || 'monthly',
-      recurrenceCount: bill.recurrence_count || 1,
+      recurrenceCount: bill.recurrence_count || 12,
+      recurrenceEndType: bill.recurrence_end_type || (bill.bill_type === 'recurring' ? 'until_stopped' : 'until_stopped'),
+      recurrenceEndDate: bill.recurrence_end_date || '',
       notes: bill.notes || '',
     });
     window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -117,7 +124,7 @@ export default function Bills() {
       const payload = {
         ...billForm,
         amount: Number(billForm.amount || 0),
-        recurrenceCount: Number(billForm.recurrenceCount || 1),
+        recurrenceCount: Number(billForm.recurrenceCount || 0),
       };
       if (editingId) {
         await api.put(`/bills/${editingId}`, payload);
@@ -134,40 +141,16 @@ export default function Bills() {
     }
   };
 
-  const startPay = (bill) => {
-    setPayForm({
-      billId: String(bill.id),
-      paymentDate: today,
-      amount: bill.amount ?? '',
-      notes: '',
-    });
-  };
-
-  const cancelPay = () => {
-    setPayForm(emptyPayForm);
-  };
-
-  const submitPayment = async (e) => {
-    e.preventDefault();
+  const removeBill = async (id) => {
     setError('');
     setMessage('');
     try {
-      await api.post(`/bills/${payForm.billId}/pay`, {
-        paymentDate: payForm.paymentDate,
-        amount: payForm.amount === '' ? undefined : Number(payForm.amount),
-        notes: payForm.notes,
-      });
-      setPayForm(emptyPayForm);
-      setMessage('Bill marked as paid.');
+      await api.delete(`/bills/${id}`);
+      setMessage('Bill deleted.');
       load();
     } catch (err) {
-      setError(err.response?.data?.error || 'Failed to record payment');
+      setError(err.response?.data?.error || 'Failed to delete bill');
     }
-  };
-
-  const removeBill = async (id) => {
-    await api.delete(`/bills/${id}`);
-    load();
   };
 
   const categoryLabel = (value) => BILL_CATEGORIES.find((c) => c.value === value)?.label || value;
@@ -175,7 +158,7 @@ export default function Bills() {
   return (
     <div>
       <h1>Bills</h1>
-      <p className="muted">Track recurring and one-time bills separately from discretionary spending to monitor cash flow.</p>
+      <p className="muted">Track scheduled obligations separately from discretionary spending so your cash flow reflects upcoming bills automatically.</p>
       {error && <div className="error">{error}</div>}
       {message && <div className="success">{message}</div>}
 
@@ -187,7 +170,7 @@ export default function Bills() {
 
       {monthlySummary && (
         <div className="stat-grid">
-          <div className="stat-card"><div className="stat-label">Bills paid</div><div className="stat-value">{formatMoney(monthlySummary.billsPaid)}</div></div>
+          <div className="stat-card"><div className="stat-label">Bills due this month</div><div className="stat-value">{formatMoney(monthlySummary.scheduledBills)}</div></div>
           <div className="stat-card"><div className="stat-label">Discretionary spending</div><div className="stat-value">{formatMoney(monthlySummary.discretionarySpending)}</div></div>
           <div className="stat-card"><div className="stat-label">Current cash flow</div><div className="stat-value">{formatMoney(monthlySummary.currentCashFlow)}</div></div>
           <div className="stat-card"><div className="stat-label">Projected balance (30d)</div><div className="stat-value">{formatMoney(monthlySummary.projectedBalance30)}</div></div>
@@ -196,7 +179,7 @@ export default function Bills() {
       )}
 
       <div className="card">
-        <h2>Upcoming bills</h2>
+        <h2>Upcoming obligations</h2>
         <div className="stat-grid">
           {upcomingWindows.map((window) => (
             <div className="stat-card" key={window.days}>
@@ -207,15 +190,15 @@ export default function Bills() {
         </div>
         <table style={{ marginTop: '1rem' }}>
           <thead>
-            <tr><th>Due date</th><th>Bill</th><th>Category</th><th>Type</th><th>Amount</th></tr>
+            <tr><th>Due date</th><th>Bill</th><th>Category</th><th>Schedule</th><th>Amount</th></tr>
           </thead>
           <tbody>
-            {upcomingWindows.find((window) => window.days === 30)?.bills?.map((bill) => (
-              <tr key={bill.id}>
-                <td>{bill.due_date}</td>
+            {upcomingWindows.find((window) => window.days === 30)?.bills?.map((bill, index) => (
+              <tr key={`${bill.id}-${bill.scheduled_date}-${index}`}>
+                <td>{bill.scheduled_date}</td>
                 <td>{bill.bill_name}</td>
                 <td>{categoryLabel(bill.category)}</td>
-                <td>{bill.bill_type === 'recurring' ? 'Recurring' : 'One-time'}</td>
+                <td>{bill.recurrence_label}</td>
                 <td>{formatMoney(bill.amount)}</td>
               </tr>
             ))}
@@ -237,87 +220,72 @@ export default function Bills() {
         )}
       </div>
 
-      <div className="row-cards">
-        <form className="card" onSubmit={submitBill}>
-          <h2>{editingId ? 'Edit bill' : 'Add bill'}</h2>
-          <label>Bill name
-            <input required value={billForm.billName} onChange={updateBillForm('billName')} />
+      <form className="card" onSubmit={submitBill}>
+        <h2>{editingId ? 'Edit bill' : 'Add bill'}</h2>
+        <label>Bill name
+          <input required value={billForm.billName} onChange={updateBillForm('billName')} />
+        </label>
+        <div className="row">
+          <label>Category
+            <select value={billForm.category} onChange={updateBillForm('category')}>
+              {BILL_CATEGORIES.map((category) => <option key={category.value} value={category.value}>{category.label}</option>)}
+            </select>
           </label>
-          <div className="row">
-            <label>Category
-              <select value={billForm.category} onChange={updateBillForm('category')}>
-                {BILL_CATEGORIES.map((category) => <option key={category.value} value={category.value}>{category.label}</option>)}
-              </select>
-            </label>
-            <label>Type
-              <select value={billForm.billType} onChange={updateBillForm('billType')}>
-                <option value="one_time">One-time</option>
-                <option value="recurring">Recurring</option>
-              </select>
-            </label>
-          </div>
-          <div className="row">
-            <label>Amount
-              <input type="number" step="0.01" required value={billForm.amount} onChange={updateBillForm('amount')} />
-            </label>
-            <label>Due date
-              <input type="date" required value={billForm.dueDate} onChange={updateBillForm('dueDate')} />
-            </label>
-          </div>
-          {billForm.billType === 'recurring' && (
+          <label>Type
+            <select value={billForm.billType} onChange={updateBillForm('billType')}>
+              <option value="one_time">One-time</option>
+              <option value="recurring">Recurring</option>
+            </select>
+          </label>
+        </div>
+        <div className="row">
+          <label>Amount
+            <input type="number" step="0.01" required value={billForm.amount} onChange={updateBillForm('amount')} />
+          </label>
+          <label>{billForm.billType === 'recurring' ? 'First due date' : 'Due date'}
+            <input type="date" required value={billForm.dueDate} onChange={updateBillForm('dueDate')} />
+          </label>
+        </div>
+        {billForm.billType === 'recurring' && (
+          <>
             <div className="row">
               <label>Frequency
                 <select value={billForm.recurrenceUnit} onChange={updateBillForm('recurrenceUnit')}>
                   {RECURRENCE_UNITS.map((unit) => <option key={unit.value} value={unit.value}>{unit.label}</option>)}
                 </select>
               </label>
-              <label>Repeat every
+              <label>Repeat until
+                <select value={billForm.recurrenceEndType} onChange={updateBillForm('recurrenceEndType')}>
+                  {RECURRENCE_END_TYPES.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+                </select>
+              </label>
+            </div>
+            {billForm.recurrenceEndType === 'billing_cycles' && (
+              <label>Number of billing cycles
                 <input type="number" min="1" step="1" value={billForm.recurrenceCount} onChange={updateBillForm('recurrenceCount')} />
               </label>
-            </div>
-          )}
-          <label>Notes
-            <input value={billForm.notes} onChange={updateBillForm('notes')} />
-          </label>
-          <div className="row">
-            <button type="submit">{editingId ? 'Update bill' : 'Add bill'}</button>
-            {editingId && <button type="button" onClick={cancelEdit}>Cancel edit</button>}
-          </div>
-        </form>
-
-        {payForm.billId ? (
-          <form className="card" onSubmit={submitPayment}>
-            <h2>Mark bill as paid</h2>
-            <p className="muted">Recording payment for {selectedBill?.bill_name || 'selected bill'}.</p>
-            <div className="row">
-              <label>Payment date
-                <input type="date" required value={payForm.paymentDate} onChange={(e) => setPayForm({ ...payForm, paymentDate: e.target.value })} />
+            )}
+            {billForm.recurrenceEndType === 'until_date' && (
+              <label>Until this date
+                <input type="date" required value={billForm.recurrenceEndDate} onChange={updateBillForm('recurrenceEndDate')} />
               </label>
-              <label>Amount
-                <input type="number" step="0.01" required value={payForm.amount} onChange={(e) => setPayForm({ ...payForm, amount: e.target.value })} />
-              </label>
-            </div>
-            <label>Notes
-              <input value={payForm.notes} onChange={(e) => setPayForm({ ...payForm, notes: e.target.value })} />
-            </label>
-            <div className="row">
-              <button type="submit">Save payment</button>
-              <button type="button" onClick={cancelPay}>Cancel</button>
-            </div>
-          </form>
-        ) : (
-          <div className="card">
-            <h2>Bill payment</h2>
-            <p className="muted">Choose a bill below to record a payment date.</p>
-          </div>
+            )}
+          </>
         )}
-      </div>
+        <label>Notes
+          <input value={billForm.notes} onChange={updateBillForm('notes')} />
+        </label>
+        <div className="row">
+          <button type="submit">{editingId ? 'Update bill' : 'Add bill'}</button>
+          {editingId && <button type="button" onClick={cancelEdit}>Cancel edit</button>}
+        </div>
+      </form>
 
       <div className="card">
         <h2>All bills</h2>
         <table>
           <thead>
-            <tr><th>Name</th><th>Category</th><th>Type</th><th>Due date</th><th>Amount</th><th>Status</th><th>Last paid</th><th></th></tr>
+            <tr><th>Name</th><th>Category</th><th>Type</th><th>Schedule</th><th>Next due</th><th>Amount</th><th>Notes</th><th></th></tr>
           </thead>
           <tbody>
             {bills.map((bill) => (
@@ -325,12 +293,11 @@ export default function Bills() {
                 <td>{bill.bill_name}</td>
                 <td>{categoryLabel(bill.category)}</td>
                 <td>{bill.bill_type === 'recurring' ? 'Recurring' : 'One-time'}</td>
-                <td>{bill.due_date}</td>
+                <td>{bill.recurrence_label}</td>
+                <td>{bill.next_due_date || bill.due_date}</td>
                 <td>{formatMoney(bill.amount)}</td>
-                <td>{bill.status}</td>
-                <td>{bill.last_payment_date || '—'}</td>
+                <td>{bill.notes || '—'}</td>
                 <td>
-                  <button type="button" onClick={() => startPay(bill)}>Pay</button>{' '}
                   <button type="button" onClick={() => startEdit(bill)}>Edit</button>{' '}
                   <button type="button" onClick={() => removeBill(bill.id)}>Delete</button>
                 </td>

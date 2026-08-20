@@ -6,6 +6,7 @@ export default function Transactions() {
   const [transactions, setTransactions] = useState([]);
   const [categories, setCategories] = useState([]);
   const [rules, setRules] = useState([]);
+  const [cashAccounts, setCashAccounts] = useState([]);
   const [selected, setSelected] = useState([]);
   const [filterForm, setFilterForm] = useState({
     startDate: '',
@@ -18,7 +19,7 @@ export default function Transactions() {
   const [error, setError] = useState('');
   const [message, setMessage] = useState('');
 
-  const [form, setForm] = useState({ txnDate: '', description: '', amount: '', paymentMethod: 'cash', categoryId: '' });
+  const [form, setForm] = useState({ txnDate: '', description: '', amount: '', paymentMethod: 'cash', categoryId: '', cashAccountId: '' });
   const [ruleForm, setRuleForm] = useState({ matchText: '', categoryId: '' });
   const [bulkCategoryId, setBulkCategoryId] = useState('');
   const [file, setFile] = useState(null);
@@ -27,6 +28,7 @@ export default function Transactions() {
     api.get('/transactions', { params: filters }).then((res) => setTransactions(res.data.transactions));
     api.get('/categories').then((res) => setCategories(res.data.categories));
     api.get('/categories/rules').then((res) => setRules(res.data.rules));
+    api.get('/cash-accounts/accounts').then((res) => setCashAccounts((res.data.accounts || []).filter((a) => a.is_active)));
   };
   useEffect(() => { load(); }, [filterForm]);
 
@@ -75,8 +77,14 @@ export default function Transactions() {
     e.preventDefault();
     setError('');
     try {
-      await api.post('/transactions', { ...form, amount: Number(form.amount), categoryId: form.categoryId || null });
-      setForm({ txnDate: '', description: '', amount: '', paymentMethod: 'cash', categoryId: '' });
+      const payload = {
+        ...form,
+        amount: Number(form.amount),
+        categoryId: form.categoryId || null,
+        cashAccountId: form.paymentMethod !== 'credit_card' && form.cashAccountId ? Number(form.cashAccountId) : null,
+      };
+      await api.post('/transactions', payload);
+      setForm({ txnDate: '', description: '', amount: '', paymentMethod: 'cash', categoryId: '', cashAccountId: '' });
       load();
     } catch (err) {
       setError(err.response?.data?.error || 'Failed to add transaction');
@@ -203,6 +211,14 @@ export default function Transactions() {
               <option value="credit_card">Credit card</option>
             </select>
           </label>
+          {form.paymentMethod !== 'credit_card' && (
+            <label>Cash account (optional)
+              <select value={form.cashAccountId} onChange={updateForm('cashAccountId')}>
+                <option value="">Not tracked to an account</option>
+                {cashAccounts.map((a) => <option key={a.id} value={a.id}>{a.account_name}</option>)}
+              </select>
+            </label>
+          )}
           <label>Category
             <select value={form.categoryId} onChange={updateForm('categoryId')}>
               <option value="">Auto / Uncategorized</option>
@@ -257,7 +273,7 @@ export default function Transactions() {
         </div>
         <table>
           <thead>
-            <tr><th></th><th>Date</th><th>Description</th><th>Amount</th><th>Method</th><th>Category</th><th>Source</th><th></th></tr>
+            <tr><th></th><th>Date</th><th>Description</th><th>Amount</th><th>Method</th><th>Account</th><th>Category</th><th>Source</th><th></th></tr>
           </thead>
           <tbody>
             {transactions.map((t) => (
@@ -267,6 +283,7 @@ export default function Transactions() {
                 <td>{t.description}</td>
                 <td>{formatMoney(t.amount)}</td>
                 <td>{t.payment_method}</td>
+                <td>{t.cash_account_name || '—'}</td>
                 <td>{t.category_name || 'Uncategorized'}</td>
                 <td>{t.source}</td>
                 <td><button onClick={() => removeTransaction(t.id)}>Delete</button></td>

@@ -1,0 +1,10 @@
+{
+  "name": "solace-app",
+  "private": true,
+  "scripts": {
+    "postinstall": "npm --prefix server install && npm --prefix client install --include=dev",
+    "build": "npm --prefix client run build",
+    "start": "npm --prefix server start",
+    "deploy:azure": "powershell -ExecutionPolicy Bypass -File .\\scripts\\deploy-azure.ps1"
+  }
+}

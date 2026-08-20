@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link } from 'react-router-dom';
 import api from '../api/client';
 import { formatMoney } from '../utils/format';
 
@@ -14,7 +14,8 @@ export default function Paychecks() {
   const [form, setForm] = useState(emptyForm);
   const [editingId, setEditingId] = useState(null);
   const [error, setError] = useState('');
-  const navigate = useNavigate();
+  const [message, setMessage] = useState('');
+  const [lastSavedPaycheckId, setLastSavedPaycheckId] = useState(null);
 
   const load = () => api.get('/paychecks').then((res) => setPaychecks(res.data.paychecks));
   useEffect(() => { load(); }, []);
@@ -46,6 +47,7 @@ export default function Paychecks() {
   const onSubmit = async (e) => {
     e.preventDefault();
     setError('');
+    setMessage('');
     try {
       const payload = { ...form };
       for (const key of Object.keys(payload)) {
@@ -60,8 +62,13 @@ export default function Paychecks() {
       setEditingId(null);
       load();
       if (Number(payload.retirementContribution || 0) > 0) {
-        navigate(`/investments?paycheckId=${res.data.paycheck.id}`);
+        setMessage('Paycheck saved. Your retirement contribution still needs allocation in Investments, but you can handle it anytime.');
+      } else {
+        setMessage(editingId ? 'Paycheck updated.' : 'Paycheck added.');
       }
+      setLastSavedPaycheckId(res.data.paycheck.id);
+      window.dispatchEvent(new Event('retirement-reminders-changed'));
+      window.dispatchEvent(new Event('cash-allocation-reminders-changed'));
     } catch (err) {
       setError(err.response?.data?.error || 'Failed to save paycheck');
     }
@@ -70,12 +77,25 @@ export default function Paychecks() {
   const remove = async (id) => {
     await api.delete(`/paychecks/${id}`);
     load();
+    setMessage('Paycheck deleted.');
+    setLastSavedPaycheckId(null);
+    window.dispatchEvent(new Event('retirement-reminders-changed'));
+    window.dispatchEvent(new Event('cash-allocation-reminders-changed'));
   };
 
   return (
     <div>
       <h1>Paychecks</h1>
       {error && <div className="error">{error}</div>}
+      {message && (
+        <div className="success">
+          {message}{' '}
+          {message.includes('retirement contribution') && <Link to="/investments">Review now</Link>}
+          {lastSavedPaycheckId && !message.includes('deleted') && (
+            <>{' '}You can also <Link to={`/cash-accounts?paycheckId=${lastSavedPaycheckId}`}>split this net pay into cash accounts</Link>.</>
+          )}
+        </div>
+      )}
 
       <form className="card" onSubmit={onSubmit}>
         <h2>{editingId ? 'Edit paycheck' : 'Add paycheck'}</h2>
@@ -121,7 +141,7 @@ export default function Paychecks() {
           </label>
         </div>
         {Number(form.retirementContribution || 0) > 0 && (
-          <p className="muted">After saving, you will be taken to Investments to allocate this retirement contribution.</p>
+          <p className="muted">After saving, Solace will keep a reminder on Investments until this retirement contribution is allocated.</p>
         )}
         <div className="row">
           <button type="submit">{editingId ? 'Update paycheck' : 'Add paycheck'}</button>

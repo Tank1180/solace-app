@@ -6,29 +6,29 @@ import { getTaxYearConfig, getAvailableTaxYears, FILING_STATUSES } from '../lib/
 const router = Router();
 router.use(authRequired, adminRequired);
 
-router.get('/years', (req, res) => {
-  res.json({ years: getAvailableTaxYears() });
+router.get('/years', async (req, res) => {
+  res.json({ years: await getAvailableTaxYears() });
 });
 
-router.get('/years/:year', (req, res) => {
-  const config = getTaxYearConfig(Number(req.params.year));
+router.get('/years/:year', async (req, res) => {
+  const config = await getTaxYearConfig(Number(req.params.year));
   if (!config) return res.status(404).json({ error: 'Tax year not configured' });
   res.json(config);
 });
 
 // Create a new tax year, optionally cloned from an existing one.
-router.post('/years', (req, res) => {
+router.post('/years', async (req, res) => {
   const { taxYear, cloneFrom } = req.body || {};
   const year = Number(taxYear);
   if (!year) return res.status(400).json({ error: 'taxYear is required' });
-  const existing = db.prepare('SELECT tax_year FROM tax_years WHERE tax_year = ?').get(year);
+  const existing = await db.prepare('SELECT tax_year FROM tax_years WHERE tax_year = ?').get(year);
   if (existing) return res.status(409).json({ error: `Tax year ${year} already exists` });
 
-  const source = cloneFrom ? getTaxYearConfig(Number(cloneFrom)) : null;
+  const source = cloneFrom ? await getTaxYearConfig(Number(cloneFrom)) : null;
 
-  const tx = db.transaction(() => {
+  const tx = db.transaction(async () => {
     if (source) {
-      db.prepare(`
+      await db.prepare(`
         INSERT INTO tax_years (tax_year, social_security_rate, social_security_wage_base, medicare_rate,
           additional_medicare_rate, additional_medicare_threshold, mileage_rate, capital_gains_rate,
           self_employment_rate, child_tax_credit, default_state_rate)
@@ -40,35 +40,37 @@ router.post('/years', (req, res) => {
         source.year.default_state_rate
       );
       const insertDeduction = db.prepare('INSERT INTO tax_standard_deductions (tax_year, filing_status, amount) VALUES (?, ?, ?)');
-      for (const [status, amount] of Object.entries(source.standardDeductions)) insertDeduction.run(year, status, amount);
+      for (const [status, amount] of Object.entries(source.standardDeductions)) await insertDeduction.run(year, status, amount);
 
       const insertBracket = db.prepare('INSERT INTO tax_brackets (tax_year, filing_status, seq, upto_income, rate) VALUES (?, ?, ?, ?, ?)');
       for (const [status, rows] of Object.entries(source.brackets)) {
-        rows.forEach(([upto, rate], seq) => insertBracket.run(year, status, seq, upto === Infinity ? null : upto, rate));
+        for (const [seq, [upto, rate]] of rows.entries()) {
+          await insertBracket.run(year, status, seq, upto === Infinity ? null : upto, rate);
+        }
       }
 
       const insertState = db.prepare('INSERT INTO tax_state_taxes (tax_year, state_code, tax_name, tax_type, rate, wage_base) VALUES (?, ?, ?, ?, ?, ?)');
-      for (const t of source.stateTaxes) insertState.run(year, t.state_code, t.tax_name, t.tax_type, t.rate, t.wage_base);
+      for (const t of source.stateTaxes) await insertState.run(year, t.state_code, t.tax_name, t.tax_type, t.rate, t.wage_base);
     } else {
-      db.prepare(`
-        INSERT INTO tax_years (tax_year, social_security_rate, social_security_wage_base, medicare_rate,
-          additional_medicare_rate, additional_medicare_threshold, mileage_rate, capital_gains_rate,
-          self_employment_rate, child_tax_credit, default_state_rate)
-        VALUES (?, 0.062, 168600, 0.0145, 0.009, 200000, 0.67, 0.15, 0.153, 2000, 0.05)
+      await db.prepare(`
+      INSERT INTO tax_years (tax_year, social_security_rate, social_security_wage_base, medicare_rate,
+        additional_medicare_rate, additional_medicare_threshold, mileage_rate, capital_gains_rate,
+        self_employment_rate, child_tax_credit, default_state_rate)
+      VALUES (?, 0.062, 168600, 0.0145, 0.009, 200000, 0.67, 0.15, 0.153, 2000, 0.05)
       `).run(year);
       const insertDeduction = db.prepare('INSERT INTO tax_standard_deductions (tax_year, filing_status, amount) VALUES (?, ?, 0)');
-      for (const status of FILING_STATUSES) insertDeduction.run(year, status);
+      for (const status of FILING_STATUSES) await insertDeduction.run(year, status);
     }
   });
-  tx();
+  await tx();
 
-  res.status(201).json(getTaxYearConfig(year));
+  res.status(201).json(await getTaxYearConfig(year));
 });
 
 // Update the scalar tax-year settings (SS/Medicare rates, mileage rate, cap gains rate, etc).
-router.put('/years/:year', (req, res) => {
+router.put('/years/:year', async (req, res) => {
   const year = Number(req.params.year);
-  const existing = db.prepare('SELECT * FROM tax_years WHERE tax_year = ?').get(year);
+  const existing = await db.prepare('SELECT * FROM tax_years WHERE tax_year = ?').get(year);
   if (!existing) return res.status(404).json({ error: 'Tax year not configured' });
 
   const {
@@ -77,7 +79,7 @@ router.put('/years/:year', (req, res) => {
     childTaxCredit, defaultStateRate,
   } = req.body || {};
 
-  db.prepare(`
+  await db.prepare(`
     UPDATE tax_years SET social_security_rate = ?, social_security_wage_base = ?, medicare_rate = ?,
       additional_medicare_rate = ?, additional_medicare_threshold = ?, mileage_rate = ?, capital_gains_rate = ?,
       self_employment_rate = ?, child_tax_credit = ?, default_state_rate = ?, updated_at = datetime('now')
@@ -91,31 +93,31 @@ router.put('/years/:year', (req, res) => {
     year
   );
 
-  res.json(getTaxYearConfig(year));
+  res.json(await getTaxYearConfig(year));
 });
 
-router.delete('/years/:year', (req, res) => {
-  db.prepare('DELETE FROM tax_years WHERE tax_year = ?').run(Number(req.params.year));
+router.delete('/years/:year', async (req, res) => {
+  await db.prepare('DELETE FROM tax_years WHERE tax_year = ?').run(Number(req.params.year));
   res.json({ success: true });
 });
 
 // ---- Standard deductions (per filing status) ----
-router.put('/years/:year/standard-deductions', (req, res) => {
+router.put('/years/:year/standard-deductions', async (req, res) => {
   const year = Number(req.params.year);
   const { filingStatus, amount } = req.body || {};
   if (!FILING_STATUSES.includes(filingStatus) || amount == null) {
     return res.status(400).json({ error: `filingStatus (one of ${FILING_STATUSES.join(', ')}) and amount are required` });
   }
-  db.prepare(`
+  await db.prepare(`
     INSERT INTO tax_standard_deductions (tax_year, filing_status, amount) VALUES (?, ?, ?)
     ON CONFLICT(tax_year, filing_status) DO UPDATE SET amount = excluded.amount
   `).run(year, filingStatus, Number(amount));
-  res.json(getTaxYearConfig(year));
+  res.json(await getTaxYearConfig(year));
 });
 
 // ---- Federal tax brackets ----
 // Replaces the full bracket ladder for one filing status in one year.
-router.put('/years/:year/brackets/:filingStatus', (req, res) => {
+router.put('/years/:year/brackets/:filingStatus', async (req, res) => {
   const year = Number(req.params.year);
   const filingStatus = req.params.filingStatus;
   if (!FILING_STATUSES.includes(filingStatus)) return res.status(400).json({ error: 'Invalid filingStatus' });
@@ -125,44 +127,44 @@ router.put('/years/:year/brackets/:filingStatus', (req, res) => {
     return res.status(400).json({ error: 'brackets must be a non-empty array of { uptoIncome, rate }' });
   }
 
-  const tx = db.transaction(() => {
-    db.prepare('DELETE FROM tax_brackets WHERE tax_year = ? AND filing_status = ?').run(year, filingStatus);
+  const tx = db.transaction(async () => {
+    await db.prepare('DELETE FROM tax_brackets WHERE tax_year = ? AND filing_status = ?').run(year, filingStatus);
     const insert = db.prepare('INSERT INTO tax_brackets (tax_year, filing_status, seq, upto_income, rate) VALUES (?, ?, ?, ?, ?)');
-    brackets.forEach((b, seq) => {
+    for (const [seq, b] of brackets.entries()) {
       const upto = b.uptoIncome === null || b.uptoIncome === '' || b.uptoIncome === undefined ? null : Number(b.uptoIncome);
-      insert.run(year, filingStatus, seq, upto, Number(b.rate));
-    });
+      await insert.run(year, filingStatus, seq, upto, Number(b.rate));
+    }
   });
-  tx();
+  await tx();
 
-  res.json(getTaxYearConfig(year));
+  res.json(await getTaxYearConfig(year));
 });
 
 // ---- State / local / additional taxes (e.g. CO FAMLI, local payroll taxes) ----
-router.get('/years/:year/state-taxes', (req, res) => {
-  const rows = db.prepare('SELECT * FROM tax_state_taxes WHERE tax_year = ? ORDER BY state_code, tax_type').all(Number(req.params.year));
+router.get('/years/:year/state-taxes', async (req, res) => {
+  const rows = await db.prepare('SELECT * FROM tax_state_taxes WHERE tax_year = ? ORDER BY state_code, tax_type').all(Number(req.params.year));
   res.json({ stateTaxes: rows });
 });
 
-router.post('/years/:year/state-taxes', (req, res) => {
+router.post('/years/:year/state-taxes', async (req, res) => {
   const year = Number(req.params.year);
   const { stateCode, taxName, taxType, rate, wageBase } = req.body || {};
   if (!stateCode || !taxName || rate == null) {
     return res.status(400).json({ error: 'stateCode, taxName, and rate are required' });
   }
-  const info = db.prepare(`
+  const info = await db.prepare(`
     INSERT INTO tax_state_taxes (tax_year, state_code, tax_name, tax_type, rate, wage_base)
     VALUES (?, ?, ?, ?, ?, ?)
   `).run(year, stateCode.trim().toUpperCase(), taxName, taxType || 'state_income', Number(rate), wageBase != null ? Number(wageBase) : null);
-  const row = db.prepare('SELECT * FROM tax_state_taxes WHERE id = ?').get(info.lastInsertRowid);
+  const row = await db.prepare('SELECT * FROM tax_state_taxes WHERE id = ?').get(info.lastInsertRowid);
   res.status(201).json({ stateTax: row });
 });
 
-router.put('/state-taxes/:id', (req, res) => {
-  const existing = db.prepare('SELECT * FROM tax_state_taxes WHERE id = ?').get(req.params.id);
+router.put('/state-taxes/:id', async (req, res) => {
+  const existing = await db.prepare('SELECT * FROM tax_state_taxes WHERE id = ?').get(req.params.id);
   if (!existing) return res.status(404).json({ error: 'State tax not found' });
   const { stateCode, taxName, taxType, rate, wageBase } = req.body || {};
-  db.prepare(`
+  await db.prepare(`
     UPDATE tax_state_taxes SET state_code = ?, tax_name = ?, tax_type = ?, rate = ?, wage_base = ?
     WHERE id = ?
   `).run(
@@ -172,12 +174,12 @@ router.put('/state-taxes/:id', (req, res) => {
     wageBase !== undefined ? (wageBase != null ? Number(wageBase) : null) : existing.wage_base,
     req.params.id
   );
-  const row = db.prepare('SELECT * FROM tax_state_taxes WHERE id = ?').get(req.params.id);
+  const row = await db.prepare('SELECT * FROM tax_state_taxes WHERE id = ?').get(req.params.id);
   res.json({ stateTax: row });
 });
 
-router.delete('/state-taxes/:id', (req, res) => {
-  db.prepare('DELETE FROM tax_state_taxes WHERE id = ?').run(req.params.id);
+router.delete('/state-taxes/:id', async (req, res) => {
+  await db.prepare('DELETE FROM tax_state_taxes WHERE id = ?').run(req.params.id);
   res.json({ success: true });
 });
 

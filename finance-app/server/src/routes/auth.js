@@ -12,7 +12,7 @@ function normalizeInitialAccountType(value) {
   return validTypes.includes(normalized) ? normalized : 'other';
 }
 
-function createInitialAccounts(userId, initialAccounts) {
+async function createInitialAccounts(userId, initialAccounts) {
   if (!Array.isArray(initialAccounts)) return;
 
   for (const rawAccount of initialAccounts) {
@@ -23,7 +23,7 @@ function createInitialAccounts(userId, initialAccounts) {
     const accountType = normalizeInitialAccountType(rawAccount.accountType);
     const currentBalance = Number(rawAccount.currentBalance || 0);
 
-    const accountInfo = db.prepare(`
+    const accountInfo = await db.prepare(`
       INSERT INTO investment_accounts (user_id, account_name, account_type, institution, current_balance)
       VALUES (?, ?, ?, ?, ?)
     `).run(userId, accountName, accountType, institution, currentBalance);
@@ -35,7 +35,7 @@ function createInitialAccounts(userId, initialAccounts) {
       if (!symbol || !Number.isFinite(shares) || shares <= 0) continue;
 
       const purchasePrice = Number(holding?.price || holding?.currentPrice || 0);
-      db.prepare(`
+      await db.prepare(`
         INSERT INTO investments (user_id, investment_account_id, symbol, shares, purchase_date, purchase_price)
         VALUES (?, ?, ?, ?, ?, ?)
       `).run(userId, accountInfo.lastInsertRowid, symbol, shares, new Date().toISOString().slice(0, 10), purchasePrice);
@@ -43,7 +43,7 @@ function createInitialAccounts(userId, initialAccounts) {
   }
 }
 
-router.post('/signup', (req, res) => {
+router.post('/signup', async (req, res) => {
   const {
     email, password, firstName, lastName, dateOfBirth, phone,
     addressLine1, addressLine2, city, state, zip,
@@ -55,7 +55,7 @@ router.post('/signup', (req, res) => {
   if (!email || !password) return res.status(400).json({ error: 'Email and password are required' });
   if (password.length < 8) return res.status(400).json({ error: 'Password must be at least 8 characters' });
 
-  const existing = db.prepare('SELECT id FROM users WHERE email = ?').get(email);
+  const existing = await db.prepare('SELECT id FROM users WHERE email = ?').get(email);
   if (existing) return res.status(409).json({ error: 'An account with this email already exists' });
 
   const finalCustomerType = customerType === 'business' ? 'business' : 'personal';
@@ -65,7 +65,7 @@ router.post('/signup', (req, res) => {
   else if (finalAccountType === 'individual') finalAccountType = 'sole_proprietor';
 
   const passwordHash = bcrypt.hashSync(password, 10);
-  const info = db.prepare(`
+  const info = await db.prepare(`
     INSERT INTO users (email, password_hash, first_name, last_name, date_of_birth, phone,
       address_line1, address_line2, city, state, zip, customer_type, account_type, business_name,
       spouse_first_name, spouse_last_name, spouse_date_of_birth)
@@ -77,19 +77,19 @@ router.post('/signup', (req, res) => {
     spouseFirstName || null, spouseLastName || null, spouseDateOfBirth || null
   );
 
-  ensureDefaultCategories(info.lastInsertRowid);
-  createInitialAccounts(info.lastInsertRowid, initialAccounts);
+  await ensureDefaultCategories(info.lastInsertRowid);
+  await createInitialAccounts(info.lastInsertRowid, initialAccounts);
 
-  const user = db.prepare('SELECT * FROM users WHERE id = ?').get(info.lastInsertRowid);
+  const user = await db.prepare('SELECT * FROM users WHERE id = ?').get(info.lastInsertRowid);
   const token = signToken(user);
   res.status(201).json({ token, user: sanitizeUser(user) });
 });
 
-router.post('/login', (req, res) => {
+router.post('/login', async (req, res) => {
   const { email, password } = req.body || {};
   if (!email || !password) return res.status(400).json({ error: 'Email and password are required' });
 
-  const user = db.prepare('SELECT * FROM users WHERE email = ?').get(email);
+  const user = await db.prepare('SELECT * FROM users WHERE email = ?').get(email);
   if (!user || !bcrypt.compareSync(password, user.password_hash)) {
     return res.status(401).json({ error: 'Invalid email or password' });
   }
@@ -99,13 +99,13 @@ router.post('/login', (req, res) => {
   res.json({ token, user: sanitizeUser(user) });
 });
 
-router.post('/forgot-password', (req, res) => {
+router.post('/forgot-password', async (req, res) => {
   const { email } = req.body || {};
   if (!email || !String(email).trim()) {
     return res.status(400).json({ error: 'Email is required' });
   }
 
-  const user = db.prepare('SELECT * FROM users WHERE email = ?').get(String(email).trim().toLowerCase());
+  const user = await db.prepare('SELECT * FROM users WHERE email = ?').get(String(email).trim().toLowerCase());
   if (!user) {
     return res.json({
       message: 'If an account exists for that email, a password reset link has been sent.',
@@ -114,7 +114,7 @@ router.post('/forgot-password', (req, res) => {
 
   const token = crypto.randomBytes(32).toString('hex');
   const expiresAt = new Date(Date.now() + 60 * 60 * 1000).toISOString();
-  db.prepare('INSERT INTO password_reset_tokens (user_id, token, expires_at) VALUES (?, ?, ?)')
+  await db.prepare('INSERT INTO password_reset_tokens (user_id, token, expires_at) VALUES (?, ?, ?)')
     .run(user.id, token, expiresAt);
 
   const resetUrl = `${process.env.APP_URL || 'http://localhost:5173'}/reset-password?token=${token}`;
@@ -126,7 +126,7 @@ router.post('/forgot-password', (req, res) => {
   });
 });
 
-router.post('/reset-password', (req, res) => {
+router.post('/reset-password', async (req, res) => {
   const { token, password } = req.body || {};
   if (!token || !password) {
     return res.status(400).json({ error: 'Reset token and new password are required' });
@@ -135,25 +135,25 @@ router.post('/reset-password', (req, res) => {
     return res.status(400).json({ error: 'Password must be at least 8 characters' });
   }
 
-  const resetToken = db.prepare("SELECT * FROM password_reset_tokens WHERE token = ? AND expires_at > datetime('now')").get(token);
+  const resetToken = await db.prepare("SELECT * FROM password_reset_tokens WHERE token = ? AND expires_at > datetime('now')").get(token);
   if (!resetToken) {
     return res.status(400).json({ error: 'This reset link is invalid or has expired' });
   }
 
   const passwordHash = bcrypt.hashSync(password, 10);
-  db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(passwordHash, resetToken.user_id);
-  db.prepare('DELETE FROM password_reset_tokens WHERE token = ?').run(token);
+  await db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(passwordHash, resetToken.user_id);
+  await db.prepare('DELETE FROM password_reset_tokens WHERE token = ?').run(token);
 
   res.json({ message: 'Your password has been reset successfully.' });
 });
 
-router.get('/me', authRequired, (req, res) => {
-  const user = db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id);
+router.get('/me', authRequired, async (req, res) => {
+  const user = await db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id);
   if (!user) return res.status(404).json({ error: 'User not found' });
   res.json({ user: sanitizeUser(user) });
 });
 
-router.put('/me', authRequired, (req, res) => {
+router.put('/me', authRequired, async (req, res) => {
   const {
     firstName, lastName, dateOfBirth, phone,
     addressLine1, addressLine2, city, state, zip,
@@ -162,7 +162,7 @@ router.put('/me', authRequired, (req, res) => {
   } = req.body || {};
 
   const validAccountTypes = ['individual', 'sole_proprietor', 'partnership', 's_corp'];
-  const current = db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id);
+  const current = await db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id);
   if (!current) return res.status(404).json({ error: 'User not found' });
 
   const finalCustomerType = customerType === 'business' || customerType === 'personal' ? customerType : current.customer_type;
@@ -170,7 +170,7 @@ router.put('/me', authRequired, (req, res) => {
   if (finalCustomerType === 'personal') finalAccountType = 'individual';
   else if (finalAccountType === 'individual') finalAccountType = 'sole_proprietor';
 
-  db.prepare(`
+  await db.prepare(`
     UPDATE users SET first_name = ?, last_name = ?, date_of_birth = ?, phone = ?,
       address_line1 = ?, address_line2 = ?, city = ?, state = ?, zip = ?,
       customer_type = ?, account_type = ?, business_name = ?,
@@ -187,26 +187,26 @@ router.put('/me', authRequired, (req, res) => {
     req.user.id
   );
 
-  const updated = db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id);
+  const updated = await db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id);
   res.json({ user: sanitizeUser(updated) });
 });
 
-router.delete('/me', authRequired, (req, res) => {
-  db.prepare('DELETE FROM users WHERE id = ?').run(req.user.id);
+router.delete('/me', authRequired, async (req, res) => {
+  await db.prepare('DELETE FROM users WHERE id = ?').run(req.user.id);
   res.json({ success: true });
 });
 
-router.get('/me/export', authRequired, (req, res) => {
+router.get('/me/export', authRequired, async (req, res) => {
   const userId = req.user.id;
   const data = {
-    user: sanitizeUser(db.prepare('SELECT * FROM users WHERE id = ?').get(userId)),
-    paychecks: db.prepare('SELECT * FROM paychecks WHERE user_id = ?').all(userId),
-    transactions: db.prepare('SELECT * FROM transactions WHERE user_id = ?').all(userId),
-    categories: db.prepare('SELECT * FROM categories WHERE user_id = ?').all(userId),
-    investment_accounts: db.prepare('SELECT * FROM investment_accounts WHERE user_id = ?').all(userId),
-    investments: db.prepare('SELECT * FROM investments WHERE user_id = ?').all(userId),
-    dividends: db.prepare('SELECT * FROM dividends WHERE user_id = ?').all(userId),
-    dependents: db.prepare('SELECT * FROM dependents WHERE user_id = ?').all(userId),
+    user: sanitizeUser(await db.prepare('SELECT * FROM users WHERE id = ?').get(userId)),
+    paychecks: await db.prepare('SELECT * FROM paychecks WHERE user_id = ?').all(userId),
+    transactions: await db.prepare('SELECT * FROM transactions WHERE user_id = ?').all(userId),
+    categories: await db.prepare('SELECT * FROM categories WHERE user_id = ?').all(userId),
+    investment_accounts: await db.prepare('SELECT * FROM investment_accounts WHERE user_id = ?').all(userId),
+    investments: await db.prepare('SELECT * FROM investments WHERE user_id = ?').all(userId),
+    dividends: await db.prepare('SELECT * FROM dividends WHERE user_id = ?').all(userId),
+    dependents: await db.prepare('SELECT * FROM dependents WHERE user_id = ?').all(userId),
   };
 
   const format = (req.query.format || 'json').toLowerCase();

@@ -36,15 +36,18 @@ export default function Investments() {
   const [divForm, setDivForm] = useState(emptyDivForm);
   const [dividendActionForm, setDividendActionForm] = useState(emptyDividendActionForm);
   const [retirementForm, setRetirementForm] = useState(emptyRetirementForm);
+  const [shareConfirmForms, setShareConfirmForms] = useState({});
+  const [accountTiers, setAccountTiers] = useState([]);
 
   const load = useCallback(async () => {
     setError('');
     try {
-      const [accountsRes, investmentsRes, dividendsRes, retirementRes] = await Promise.all([
+      const [accountsRes, investmentsRes, dividendsRes, retirementRes, accountTypesRes] = await Promise.all([
         api.get('/investments/accounts'),
         api.get(`/investments?mode=${marketMode}`),
         api.get('/investments/dividends'),
         api.get('/investments/retirement-allocations'),
+        api.get('/investments/account-types'),
       ]);
       setAccounts(accountsRes.data.accounts);
       setInvestments(investmentsRes.data.investments);
@@ -52,6 +55,7 @@ export default function Investments() {
       setMarketWarnings(investmentsRes.data.marketWarnings || []);
       setDividends(dividendsRes.data.dividends);
       setRetirement(retirementRes.data);
+      setAccountTiers(accountTypesRes.data.tiers || []);
     } catch (err) {
       setError(err.response?.data?.error || 'Failed to load investments');
     }
@@ -175,7 +179,43 @@ export default function Investments() {
   const removeAccount = async (id) => { await api.delete(`/investments/accounts/${id}`); load(); };
   const removeInvestment = async (id) => { await api.delete(`/investments/${id}`); load(); };
   const removeDividend = async (id) => { await api.delete(`/investments/dividends/${id}`); load(); };
-  const removeAllocation = async (id) => { await api.delete(`/investments/retirement-allocations/${id}`); load(); };
+  const removeAllocation = async (id) => {
+    await api.delete(`/investments/retirement-allocations/${id}`);
+    load();
+    window.dispatchEvent(new Event('retirement-reminders-changed'));
+  };
+  const updateShareConfirmForm = (investmentId, field, value) => {
+    setShareConfirmForms((current) => ({
+      ...current,
+      [investmentId]: { ...(current[investmentId] || { shares: '', purchasePrice: '', purchaseDate: '' }), [field]: value },
+    }));
+  };
+  const confirmShares = async (investmentId) => {
+    setError('');
+    setMessage('');
+    const row = shareConfirmForms[investmentId] || {};
+    if (!(Number(row.shares) > 0) || !(Number(row.purchasePrice) > 0)) {
+      setError('Enter the number of shares and the price paid per share to confirm this allocation.');
+      return;
+    }
+    try {
+      await api.put(`/investments/${investmentId}`, {
+        shares: Number(row.shares),
+        purchasePrice: Number(row.purchasePrice),
+        purchaseDate: row.purchaseDate || undefined,
+      });
+      setShareConfirmForms((current) => {
+        const next = { ...current };
+        delete next[investmentId];
+        return next;
+      });
+      setMessage('Shares confirmed. This holding now appears with your other investments.');
+      load();
+      window.dispatchEvent(new Event('retirement-reminders-changed'));
+    } catch (err) {
+      setError(err.response?.data?.error || 'Failed to confirm shares');
+    }
+  };
   const downloadPortfolioReport = async () => {
     setError('');
     try {
@@ -254,19 +294,33 @@ export default function Investments() {
     e.preventDefault();
     setError('');
     setMessage('');
+
+    const allocations = retirementForm.destinations.map((row) => ({
+      symbol: row.symbol,
+      amount: Number(row.amount || 0),
+    }));
+    if (allocations.some((row) => !row.symbol || row.amount <= 0)) {
+      setError('Each destination symbol must have an amount greater than zero.');
+      return;
+    }
+    const requested = allocations.reduce((sum, row) => sum + row.amount, 0);
+    const remaining = Number(selectedPaycheck?.remaining_amount || 0);
+    if (requested > remaining + 0.0001) {
+      setError(`Total allocated (${formatMoney(requested)}) cannot exceed the remaining balance of ${formatMoney(remaining)} for this paycheck.`);
+      return;
+    }
+
     try {
       const payload = {
         paycheckId: Number(retirementForm.paycheckId),
         investmentAccountId: Number(retirementForm.investmentAccountId),
-        allocations: retirementForm.destinations.map((row) => ({
-          symbol: row.symbol,
-          amount: Number(row.amount || 0),
-        })),
+        allocations,
       };
       await api.post('/investments/retirement-allocations', payload);
       setMessage('Retirement contribution allocated.');
       clearRetirementForm();
       load();
+      window.dispatchEvent(new Event('retirement-reminders-changed'));
     } catch (err) {
       setError(err.response?.data?.error || 'Failed to allocate retirement contribution');
     }
@@ -403,7 +457,7 @@ export default function Investments() {
 
             <div className="row">
               <button type="button" onClick={addDestinationRow}>Add another destination</button>
-              <button type="submit" disabled={accounts.length === 0 || !retirementForm.investmentAccountId || filteredInvestments.length === 0}>Allocate funds</button>
+              <button type="submit" disabled={accounts.length === 0 || !retirementForm.investmentAccountId}>Allocate funds</button>
             </div>
 
             {selectedAccount && filteredInvestments.length === 0 && (
@@ -413,6 +467,56 @@ export default function Investments() {
         )}
       </div>
 
+      {retirement.pendingShareAllocations && retirement.pendingShareAllocations.length > 0 && (
+        <div className="card">
+          <h2>Investments awaiting share count</h2>
+          <p className="muted">
+            These retirement contributions have been allocated to a destination but the number of shares purchased hasn't been entered yet.
+            They're kept separate from your portfolio totals until confirmed. Enter the shares and price paid to move each one into your Investments list below.
+          </p>
+          <table>
+            <thead>
+              <tr><th>Symbol</th><th>Account</th><th>Amount allocated</th><th>From paychecks</th><th>Shares</th><th>Price paid per share</th><th>Purchase date</th><th></th></tr>
+            </thead>
+            <tbody>
+              {retirement.pendingShareAllocations.map((p) => {
+                const rowForm = shareConfirmForms[p.id] || { shares: '', purchasePrice: '', purchaseDate: '' };
+                return (
+                  <tr key={p.id}>
+                    <td>{p.symbol}</td>
+                    <td>{p.account_name || '—'}</td>
+                    <td>{formatMoney(p.allocated_amount)}</td>
+                    <td>{p.first_pay_date === p.last_pay_date ? p.first_pay_date : `${p.first_pay_date} – ${p.last_pay_date}`}</td>
+                    <td>
+                      <input
+                        type="number" step="0.0001" style={{ width: '6rem' }}
+                        value={rowForm.shares}
+                        onChange={(e) => updateShareConfirmForm(p.id, 'shares', e.target.value)}
+                      />
+                    </td>
+                    <td>
+                      <input
+                        type="number" step="0.01" style={{ width: '6rem' }}
+                        value={rowForm.purchasePrice}
+                        onChange={(e) => updateShareConfirmForm(p.id, 'purchasePrice', e.target.value)}
+                      />
+                    </td>
+                    <td>
+                      <input
+                        type="date" style={{ width: '9rem' }}
+                        value={rowForm.purchaseDate}
+                        onChange={(e) => updateShareConfirmForm(p.id, 'purchaseDate', e.target.value)}
+                      />
+                    </td>
+                    <td><button type="button" onClick={() => confirmShares(p.id)}>Confirm shares</button></td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+
       <div className="row-cards">
         <form className="card" onSubmit={addAccount}>
           <h2>Add investment account</h2>
@@ -421,11 +525,13 @@ export default function Investments() {
           </label>
           <label>Type
             <select value={accountForm.accountType} onChange={(e) => setAccountForm({ ...accountForm, accountType: e.target.value })}>
-              <option value="brokerage">Brokerage</option>
-              <option value="401k">401(k)</option>
-              <option value="ira">IRA</option>
-              <option value="roth_ira">Roth IRA</option>
-              <option value="other">Other</option>
+              {accountTiers.map((tier) => (
+                <optgroup key={tier.tier} label={tier.label}>
+                  {tier.types.map((type) => (
+                    <option key={type.value} value={type.value}>{type.label}</option>
+                  ))}
+                </optgroup>
+              ))}
             </select>
           </label>
           <label>Institution
@@ -506,7 +612,7 @@ export default function Investments() {
               <tr key={a.id}>
                 <td>{a.pay_date}{a.employer ? ` — ${a.employer}` : ''}</td>
                 <td>{a.account_name || '—'}</td>
-                <td>{a.symbol || '—'}</td>
+                <td>{a.symbol || '—'}{Number(a.pending_shares) === 1 && <span className="muted"> (shares pending)</span>}</td>
                 <td>{formatMoney(a.amount)}</td>
                 <td><button type="button" onClick={() => removeAllocation(a.id)}>Delete</button></td>
               </tr>

@@ -115,7 +115,8 @@ export default function Profile() {
           </>
         )}
 
-        <h2>Spouse information</h2>
+        <h2>Spouse information <span className="muted" style={{ fontWeight: 'normal', fontSize: '0.85em' }}>(optional)</span></h2>
+        <p className="muted">Only needed if you file taxes jointly with a spouse. Leave blank if it doesn't apply to you.</p>
         <div className="row">
           <label>Spouse first name<input value={form.spouseFirstName} onChange={update('spouseFirstName')} /></label>
           <label>Spouse last name<input value={form.spouseLastName} onChange={update('spouseLastName')} /></label>

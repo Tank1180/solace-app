@@ -1,6 +1,10 @@
+import 'express-async-errors';
 import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import authRoutes from './routes/auth.js';
 import paycheckRoutes from './routes/paychecks.js';
@@ -17,7 +21,12 @@ import billRoutes from './routes/bills.js';
 import subscriptionRoutes from './routes/subscriptions.js';
 import adminSubscriptionRoutes from './routes/adminSubscriptions.js';
 import businessRoutes from './routes/business.js';
+import cashAccountRoutes from './routes/cashAccounts.js';
+import { initDb } from './db/index.js';
 
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const clientDistPath = path.join(__dirname, '..', '..', 'client', 'dist');
+const hasClientBuild = fs.existsSync(path.join(clientDistPath, 'index.html'));
 const app = express();
 const PORT = process.env.PORT || 4000;
 
@@ -41,14 +50,35 @@ app.use('/api/bills', billRoutes);
 app.use('/api/subscriptions', subscriptionRoutes);
 app.use('/api/admin/subscriptions', adminSubscriptionRoutes);
 app.use('/api/business', businessRoutes);
+app.use('/api/cash-accounts', cashAccountRoutes);
 
-app.use((req, res) => res.status(404).json({ error: 'Not found' }));
+if (hasClientBuild) {
+  app.use(express.static(clientDistPath));
+  app.get('*', (req, res, next) => {
+    if (req.path.startsWith('/api/')) {
+      next();
+      return;
+    }
+    res.sendFile(path.join(clientDistPath, 'index.html'));
+  });
+}
+
+app.use((req, res) => {
+  if (req.path.startsWith('/api/')) {
+    res.status(404).json({ error: 'Not found' });
+    return;
+  }
+
+  res.status(404).send(hasClientBuild ? 'Client route not found' : 'Client build not found');
+});
 
 // eslint-disable-next-line no-unused-vars
 app.use((err, req, res, next) => {
   console.error(err);
-  res.status(500).json({ error: 'Internal server error' });
+  res.status(500).json({ error: err.message || 'Internal server error' });
 });
+
+await initDb();
 
 app.listen(PORT, () => {
   console.log(`Finance app server listening on http://localhost:${PORT}`);

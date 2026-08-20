@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { Link } from 'react-router-dom';
 import api from '../api/client';
 import { formatMoney } from '../utils/format';
 
@@ -12,6 +13,8 @@ export default function OtherIncome() {
   const [income, setIncome] = useState([]);
   const [form, setForm] = useState(emptyForm);
   const [error, setError] = useState('');
+  const [message, setMessage] = useState('');
+  const [lastSavedIncomeId, setLastSavedIncomeId] = useState(null);
 
   const load = () => api.get('/other-income').then((res) => setIncome(res.data.income));
 
@@ -48,12 +51,13 @@ export default function OtherIncome() {
   const onSubmit = async (e) => {
     e.preventDefault();
     setError('');
+    setMessage('');
     if (!form.incomeDate || !form.incomeGroup || !form.category || form.amount === '') {
       setError('Date, income group, category, and amount are required');
       return;
     }
     try {
-      await api.post('/other-income', {
+      const res = await api.post('/other-income', {
         incomeDate: form.incomeDate,
         incomeGroup: form.incomeGroup,
         category: form.category,
@@ -63,7 +67,10 @@ export default function OtherIncome() {
         isSelfEmployment: form.isSelfEmployment,
       });
       setForm(emptyForm);
+      setLastSavedIncomeId(res.data.income.id);
+      setMessage('Income entry added.');
       load();
+      window.dispatchEvent(new Event('cash-allocation-reminders-changed'));
     } catch (err) {
       setError(err.response?.data?.error || 'Failed to save income entry');
     }
@@ -72,6 +79,8 @@ export default function OtherIncome() {
   const remove = async (id) => {
     await api.delete(`/other-income/${id}`);
     load();
+    setLastSavedIncomeId(null);
+    window.dispatchEvent(new Event('cash-allocation-reminders-changed'));
   };
 
   const categoryLabel = (groupKey, categoryKey) => {
@@ -88,6 +97,14 @@ export default function OtherIncome() {
       <h1>Other Income</h1>
       <p className="muted">Track income you receive outside of your regular paycheck: gifts, winnings, rental income, side hustles, gig work, government payments, crypto, and more.</p>
       {error && <div className="error">{error}</div>}
+      {message && (
+        <div className="success">
+          {message}{' '}
+          {lastSavedIncomeId && (
+            <>You can also <Link to={`/cash-accounts?otherIncomeId=${lastSavedIncomeId}`}>split this into cash accounts</Link>.</>
+          )}
+        </div>
+      )}
 
       <div className="stats-grid" style={{ marginBottom: '1rem' }}>
         <div className="stat-card">

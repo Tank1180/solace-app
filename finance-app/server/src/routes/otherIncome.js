@@ -132,23 +132,23 @@ function categoryMeta(category) {
   return null;
 }
 
-router.get('/categories', (req, res) => {
+router.get('/categories', async (req, res) => {
   res.json({ groups: INCOME_CATEGORIES });
 });
 
-router.get('/', (req, res) => {
+router.get('/', async (req, res) => {
   const { year } = req.query;
   let rows;
   if (year) {
-    rows = db.prepare("SELECT * FROM other_income WHERE user_id = ? AND strftime('%Y', income_date) = ? ORDER BY income_date DESC")
+    rows = await db.prepare("SELECT * FROM other_income WHERE user_id = ? AND strftime('%Y', income_date) = ? ORDER BY income_date DESC")
       .all(req.user.id, String(year));
   } else {
-    rows = db.prepare('SELECT * FROM other_income WHERE user_id = ? ORDER BY income_date DESC').all(req.user.id);
+    rows = await db.prepare('SELECT * FROM other_income WHERE user_id = ? ORDER BY income_date DESC').all(req.user.id);
   }
   res.json({ income: rows });
 });
 
-router.post('/', (req, res) => {
+router.post('/', async (req, res) => {
   const { incomeDate, incomeGroup, category, description, amount, isTaxable, isSelfEmployment } = req.body || {};
   if (!incomeDate || !INCOME_CATEGORIES[incomeGroup] || !ALL_CATEGORY_VALUES.has(category) || amount == null) {
     return res.status(400).json({ error: 'incomeDate, a valid incomeGroup, a valid category, and amount are required' });
@@ -157,24 +157,24 @@ router.post('/', (req, res) => {
   const finalTaxable = isTaxable != null ? (isTaxable ? 1 : 0) : (meta?.taxable ? 1 : 0);
   const finalSelfEmployment = isSelfEmployment != null ? (isSelfEmployment ? 1 : 0) : (meta?.selfEmployment ? 1 : 0);
 
-  const info = db.prepare(`
+  const info = await db.prepare(`
     INSERT INTO other_income (user_id, income_date, income_group, category, description, amount, is_taxable, is_self_employment)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
   `).run(req.user.id, incomeDate, incomeGroup, category, description || null, Number(amount), finalTaxable, finalSelfEmployment);
 
-  const row = db.prepare('SELECT * FROM other_income WHERE id = ?').get(info.lastInsertRowid);
+  const row = await db.prepare('SELECT * FROM other_income WHERE id = ?').get(info.lastInsertRowid);
   res.status(201).json({ income: row });
 });
 
-router.put('/:id', (req, res) => {
-  const existing = db.prepare('SELECT * FROM other_income WHERE id = ? AND user_id = ?').get(req.params.id, req.user.id);
+router.put('/:id', async (req, res) => {
+  const existing = await db.prepare('SELECT * FROM other_income WHERE id = ? AND user_id = ?').get(req.params.id, req.user.id);
   if (!existing) return res.status(404).json({ error: 'Income entry not found' });
 
   const { incomeDate, incomeGroup, category, description, amount, isTaxable, isSelfEmployment } = req.body || {};
   const finalGroup = INCOME_CATEGORIES[incomeGroup] ? incomeGroup : existing.income_group;
   const finalCategory = ALL_CATEGORY_VALUES.has(category) ? category : existing.category;
 
-  db.prepare(`
+  await db.prepare(`
     UPDATE other_income SET income_date = ?, income_group = ?, category = ?, description = ?, amount = ?,
       is_taxable = ?, is_self_employment = ?
     WHERE id = ? AND user_id = ?
@@ -186,12 +186,12 @@ router.put('/:id', (req, res) => {
     req.params.id, req.user.id
   );
 
-  const row = db.prepare('SELECT * FROM other_income WHERE id = ?').get(req.params.id);
+  const row = await db.prepare('SELECT * FROM other_income WHERE id = ?').get(req.params.id);
   res.json({ income: row });
 });
 
-router.delete('/:id', (req, res) => {
-  db.prepare('DELETE FROM other_income WHERE id = ? AND user_id = ?').run(req.params.id, req.user.id);
+router.delete('/:id', async (req, res) => {
+  await db.prepare('DELETE FROM other_income WHERE id = ? AND user_id = ?').run(req.params.id, req.user.id);
   res.json({ success: true });
 });
 

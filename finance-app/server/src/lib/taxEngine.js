@@ -5,28 +5,28 @@ import db from '../db/index.js';
 
 export const FILING_STATUSES = ['single', 'married_joint', 'married_separate', 'head_of_household'];
 
-export function getTaxYearConfig(year) {
-  const yearRow = db.prepare('SELECT * FROM tax_years WHERE tax_year = ?').get(year);
+export async function getTaxYearConfig(year) {
+  const yearRow = await db.prepare('SELECT * FROM tax_years WHERE tax_year = ?').get(year);
   if (!yearRow) return null;
 
-  const standardDeductionRows = db.prepare('SELECT * FROM tax_standard_deductions WHERE tax_year = ?').all(year);
+  const standardDeductionRows = await db.prepare('SELECT * FROM tax_standard_deductions WHERE tax_year = ?').all(year);
   const standardDeductions = {};
   for (const row of standardDeductionRows) standardDeductions[row.filing_status] = row.amount;
 
-  const bracketRows = db.prepare('SELECT * FROM tax_brackets WHERE tax_year = ? ORDER BY filing_status, seq').all(year);
+  const bracketRows = await db.prepare('SELECT * FROM tax_brackets WHERE tax_year = ? ORDER BY filing_status, seq').all(year);
   const brackets = {};
   for (const row of bracketRows) {
     if (!brackets[row.filing_status]) brackets[row.filing_status] = [];
     brackets[row.filing_status].push([row.upto_income == null ? Infinity : row.upto_income, row.rate]);
   }
 
-  const stateTaxRows = db.prepare('SELECT * FROM tax_state_taxes WHERE tax_year = ? ORDER BY state_code, tax_type').all(year);
+  const stateTaxRows = await db.prepare('SELECT * FROM tax_state_taxes WHERE tax_year = ? ORDER BY state_code, tax_type').all(year);
 
   return { year: yearRow, standardDeductions, brackets, stateTaxes: stateTaxRows };
 }
 
-export function getAvailableTaxYears() {
-  return db.prepare('SELECT tax_year FROM tax_years ORDER BY tax_year DESC').all().map((r) => r.tax_year);
+export async function getAvailableTaxYears() {
+  return (await db.prepare('SELECT tax_year FROM tax_years ORDER BY tax_year DESC').all()).map((r) => r.tax_year);
 }
 
 export function stateTaxesFor(config, stateCode) {
@@ -74,6 +74,7 @@ export function projectTax(config, params) {
     otherIncome = 0,
     federalWithholding = 0,
     stateWithholding = 0,
+    payrollTaxesPaid = 0,
   } = params;
 
   const status = FILING_STATUSES.includes(filingStatus) ? filingStatus : 'single';
@@ -122,7 +123,7 @@ export function projectTax(config, params) {
   }
 
   const totalLiability = federalTax + stateTax + payrollTax;
-  const totalWithheld = federalWithholding + stateWithholding;
+  const totalWithheld = federalWithholding + stateWithholding + payrollTaxesPaid;
   const balanceDue = totalLiability - totalWithheld;
 
   return {
@@ -143,6 +144,7 @@ export function projectTax(config, params) {
     stateTax: Math.round(stateTax * 100) / 100,
     stateTaxBreakdown,
     totalLiability: Math.round(totalLiability * 100) / 100,
+    payrollTaxesPaid: Math.round(payrollTaxesPaid * 100) / 100,
     totalWithheld: Math.round(totalWithheld * 100) / 100,
     balanceDue: Math.round(balanceDue * 100) / 100,
     effectiveRate: totalIncome > 0 ? Math.round((totalLiability / totalIncome) * 10000) / 100 : 0,

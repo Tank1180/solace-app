@@ -17,12 +17,12 @@ function computeNet(p) {
   );
 }
 
-router.get('/', (req, res) => {
-  const rows = db.prepare('SELECT * FROM paychecks WHERE user_id = ? ORDER BY pay_date DESC').all(req.user.id);
+router.get('/', async (req, res) => {
+  const rows = await db.prepare('SELECT * FROM paychecks WHERE user_id = ? ORDER BY pay_date DESC').all(req.user.id);
   res.json({ paychecks: rows });
 });
 
-router.post('/', (req, res) => {
+router.post('/', async (req, res) => {
   const p = req.body || {};
   if (!p.payDate || p.grossPay == null) return res.status(400).json({ error: 'payDate and grossPay are required' });
   const ownerType = p.ownerType === 'spouse' ? 'spouse' : 'self';
@@ -33,7 +33,7 @@ router.post('/', (req, res) => {
     benefits_deduction: p.benefitsDeduction, retirement_contribution: p.retirementContribution,
   });
 
-  const info = db.prepare(`
+  const info = await db.prepare(`
     INSERT INTO paychecks (user_id, owner_type, pay_date, employer, gross_pay, federal_tax, state_tax,
       social_security, medicare, benefits_deduction, retirement_contribution, net_pay)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -42,21 +42,21 @@ router.post('/', (req, res) => {
     p.socialSecurity || 0, p.medicare || 0, p.benefitsDeduction || 0, p.retirementContribution || 0, netPay
   );
 
-  const row = db.prepare('SELECT * FROM paychecks WHERE id = ?').get(info.lastInsertRowid);
+  const row = await db.prepare('SELECT * FROM paychecks WHERE id = ?').get(info.lastInsertRowid);
   res.status(201).json({ paycheck: row });
 });
 
-router.put('/:id', (req, res) => {
-  const existing = db.prepare('SELECT * FROM paychecks WHERE id = ? AND user_id = ?').get(req.params.id, req.user.id);
+router.put('/:id', async (req, res) => {
+  const existing = await db.prepare('SELECT * FROM paychecks WHERE id = ? AND user_id = ?').get(req.params.id, req.user.id);
   if (!existing) return res.status(404).json({ error: 'Paycheck not found' });
 
   const p = req.body || {};
   if (!p.payDate || p.grossPay == null) return res.status(400).json({ error: 'payDate and grossPay are required' });
   const ownerType = p.ownerType === 'spouse' ? 'spouse' : 'self';
 
-  const allocated = db.prepare(
+  const allocated = (await db.prepare(
     'SELECT COALESCE(SUM(amount), 0) as v FROM retirement_contribution_allocations WHERE user_id = ? AND paycheck_id = ?'
-  ).get(req.user.id, req.params.id).v;
+  ).get(req.user.id, req.params.id)).v;
   const newRetirementContribution = Number(p.retirementContribution || 0);
   if (newRetirementContribution < Number(allocated || 0)) {
     return res.status(400).json({ error: 'Retirement contribution cannot be less than the amount already allocated in Investments' });
@@ -68,7 +68,7 @@ router.put('/:id', (req, res) => {
     benefits_deduction: p.benefitsDeduction, retirement_contribution: p.retirementContribution,
   });
 
-  db.prepare(`
+  await db.prepare(`
     UPDATE paychecks
     SET owner_type = ?, pay_date = ?, employer = ?, gross_pay = ?, federal_tax = ?, state_tax = ?,
       social_security = ?, medicare = ?, benefits_deduction = ?, retirement_contribution = ?, net_pay = ?
@@ -79,12 +79,12 @@ router.put('/:id', (req, res) => {
     req.params.id, req.user.id
   );
 
-  const row = db.prepare('SELECT * FROM paychecks WHERE id = ?').get(req.params.id);
+  const row = await db.prepare('SELECT * FROM paychecks WHERE id = ?').get(req.params.id);
   res.json({ paycheck: row });
 });
 
-router.delete('/:id', (req, res) => {
-  db.prepare('DELETE FROM paychecks WHERE id = ? AND user_id = ?').run(req.params.id, req.user.id);
+router.delete('/:id', async (req, res) => {
+  await db.prepare('DELETE FROM paychecks WHERE id = ? AND user_id = ?').run(req.params.id, req.user.id);
   res.json({ success: true });
 });
 

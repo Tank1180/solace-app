@@ -2,6 +2,7 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider } from './context/AuthContext';
 import ProtectedRoute from './components/ProtectedRoute';
 import Layout from './components/Layout';
+import Home from './pages/Home';
 import Login from './pages/Login';
 import Signup from './pages/Signup';
 import ForgotPassword from './pages/ForgotPassword';
@@ -13,6 +14,7 @@ import Investments from './pages/Investments';
 import Bills from './pages/Bills';
 import Tax from './pages/Tax';
 import OtherIncome from './pages/OtherIncome';
+import CashAccounts from './pages/CashAccounts';
 import Profile from './pages/Profile';
 import Subscription from './pages/Subscription';
 import Business from './pages/Business';
@@ -26,6 +28,7 @@ function App() {
     <AuthProvider>
       <BrowserRouter>
         <Routes>
+          <Route path="/" element={<Home />} />
           <Route path="/login" element={<Login />} />
           <Route path="/signup" element={<Signup />} />
           <Route path="/forgot-password" element={<ForgotPassword />} />
@@ -44,6 +47,7 @@ function App() {
             <Route path="/bills" element={<Bills />} />
             <Route path="/tax" element={<Tax />} />
             <Route path="/other-income" element={<OtherIncome />} />
+            <Route path="/cash-accounts" element={<CashAccounts />} />
             <Route path="/profile" element={<Profile />} />
             <Route path="/subscription" element={<Subscription />} />
             <Route path="/business" element={<Business />} />
@@ -72,7 +76,7 @@ function App() {
               )}
             />
           </Route>
-          <Route path="*" element={<Navigate to="/dashboard" replace />} />
+          <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </BrowserRouter>
     </AuthProvider>

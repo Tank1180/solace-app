@@ -19,6 +19,34 @@ const FILING_STATUS_LABELS = {
 const currentYear = new Date().getFullYear();
 const YEARS = [currentYear, currentYear - 1, currentYear - 2];
 
+function formatSignedMoney(amount) {
+  const numeric = Number(amount || 0);
+  return numeric < 0 ? `-${formatMoney(Math.abs(numeric))}` : formatMoney(numeric);
+}
+
+function formatPercent(value) {
+  return `${Number(value || 0).toFixed(2)}%`;
+}
+
+function percentOf(amount, base) {
+  const safeAmount = Number(amount || 0);
+  const safeBase = Number(base || 0);
+  if (!safeBase) return 0;
+  return (safeAmount / safeBase) * 100;
+}
+
+function StatementRow({ label, amount, muted = false, highlight = false, indent = false, separator = false, percentage = null, tone = 'default' }) {
+  return (
+    <div className={`tax-statement-row${muted ? ' muted-row' : ''}${highlight ? ' highlight-row' : ''}${indent ? ' indent-row' : ''}${separator ? ' separator-row' : ''}${tone !== 'default' ? ` ${tone}-row` : ''}`}>
+      <span>{label}</span>
+      <strong>
+        {formatMoney(amount)}
+        {percentage != null && <small>{formatPercent(percentage)}</small>}
+      </strong>
+    </div>
+  );
+}
+
 export default function Tax() {
   const [year, setYear] = useState(currentYear);
   const [profile, setProfile] = useState(null);
@@ -111,6 +139,18 @@ export default function Tax() {
     link.remove();
   };
 
+  const projectionData = projection?.projection;
+  const projectionInputs = projection?.inputs;
+  const taxableInvestmentIncome = Number(projectionInputs?.investmentGains || 0) + Number(projectionInputs?.dividendIncome || 0);
+  const incomeSubtotal = Number(projectionInputs?.grossWages || 0) + Number(projectionInputs?.taxableOtherIncome || 0) + Number(projectionInputs?.selfEmploymentOtherIncome || 0) + taxableInvestmentIncome;
+  const deductionsSubtotal = Number(projectionInputs?.retirementContributions || 0) + Number(projectionData?.deductionUsed || 0);
+  const calculatedTaxableIncome = Number(projectionData?.ordinaryTaxableIncome || 0) + taxableInvestmentIncome;
+  const taxesPaidSoFar = Number(projectionData?.totalWithheld || 0);
+  const remainingBalance = Number(projectionData?.balanceDue || 0);
+  const ordinaryFederalTax = Math.max(0, Number(projectionData?.federalTax || 0) - Number(projectionData?.capGainsTax || 0) - Number(projectionData?.selfEmploymentTax || 0));
+  const stateTaxableIncome = Math.max(0, Number(projectionData?.totalIncome || 0) - Number(projectionData?.standardDeduction || 0));
+  const balanceTone = remainingBalance < 0 ? 'positive' : remainingBalance > 0 ? 'negative' : 'neutral';
+
   return (
     <div>
       <h1>Tax Center</h1>
@@ -144,45 +184,86 @@ export default function Tax() {
         </div>
       )}
 
-      {projection && (
-        <div className="stats-grid">
-          <div className="stat-card">
-            <div className="stat-label">Projected federal tax</div>
-            <div className="stat-value">{formatMoney(projection.projection.federalTax)}</div>
+      {projectionData && (
+        <>
+          <div className="stat-grid">
+            <div className="stat-card">
+              <div className="stat-label">Filing status</div>
+              <div className="stat-value tax-status-value">{FILING_STATUS_LABELS[projectionInputs.filingStatus] || projectionInputs.filingStatus}</div>
+            </div>
+            <div className="stat-card">
+              <div className="stat-label">Current ordinary taxable income</div>
+              <div className="stat-value">{formatMoney(projectionData.ordinaryTaxableIncome)}</div>
+            </div>
+            <div className="stat-card">
+              <div className="stat-label">Taxes paid so far</div>
+              <div className="stat-value">{formatMoney(taxesPaidSoFar)}</div>
+            </div>
+            <div className="stat-card">
+              <div className="stat-label">Estimated total taxes</div>
+              <div className="stat-value">{formatMoney(projectionData.totalLiability)}</div>
+            </div>
+            <div className="stat-card">
+              <div className="stat-label">{remainingBalance >= 0 ? 'Projected taxes owed' : 'Projected refund'}</div>
+              <div className={`stat-value ${balanceTone === 'positive' ? 'brand-positive' : balanceTone === 'negative' ? 'brand-negative' : ''}`}>
+                {formatSignedMoney(remainingBalance)}
+              </div>
+            </div>
           </div>
-          <div className="stat-card">
-            <div className="stat-label">Projected state tax</div>
-            <div className="stat-value">{formatMoney(projection.projection.stateTax)}</div>
+
+          <div className="card">
+            <h2>Tax projection statement</h2>
+            <p className="muted">
+              This view shows how your filing status, income, deductions, and taxes paid roll into your current year estimate.
+            </p>
+
+            <div className="tax-statement-grid">
+              <section className="tax-statement-section">
+                <h3>Taxable income build-up</h3>
+                <StatementRow label="Gross wages" amount={projectionInputs.grossWages} />
+                <StatementRow label="Taxable other income" amount={projectionInputs.taxableOtherIncome} />
+                <StatementRow label="Self-employment income" amount={projectionInputs.selfEmploymentOtherIncome} />
+                <StatementRow label="Taxable investment income (gains + dividends)" amount={taxableInvestmentIncome} />
+                <StatementRow label="Income subtotal" amount={incomeSubtotal} highlight separator />
+                <StatementRow label="Retirement contributions" amount={-projectionInputs.retirementContributions} muted indent />
+                <StatementRow label={`Deduction used ${projectionData.itemizing ? '(itemized)' : '(standard)'}`} amount={-projectionData.deductionUsed} muted indent />
+                <StatementRow label="Deductions subtotal" amount={-deductionsSubtotal} muted highlight separator />
+                <StatementRow label="Calculated taxable income" amount={calculatedTaxableIncome} highlight separator />
+              </section>
+
+              <section className="tax-statement-section">
+                <h3>Taxes paid and estimated</h3>
+                <StatementRow label="Federal withholding paid" amount={projectionInputs.federalWithholding} />
+                <StatementRow label="State withholding paid" amount={projectionInputs.stateWithholding} />
+                <StatementRow label="Social Security paid" amount={projectionInputs.socialSecurityPaid} />
+                <StatementRow label="Medicare paid" amount={projectionInputs.medicarePaid} />
+                <StatementRow label="Total taxes paid so far" amount={taxesPaidSoFar} highlight separator />
+                <div className="tax-statement-subheading">Estimated taxes</div>
+                <StatementRow label="Estimated ordinary federal tax" amount={ordinaryFederalTax} percentage={percentOf(ordinaryFederalTax, projectionData.ordinaryTaxableIncome)} />
+                <StatementRow label="Estimated capital gains tax" amount={projectionData.capGainsTax} percentage={percentOf(projectionData.capGainsTax, taxableInvestmentIncome)} />
+                <StatementRow label="Estimated self-employment tax" amount={projectionData.selfEmploymentTax} percentage={percentOf(projectionData.selfEmploymentTax, projectionInputs.selfEmploymentOtherIncome)} />
+                <StatementRow label="Estimated state tax" amount={projectionData.stateTax} percentage={percentOf(projectionData.stateTax, stateTaxableIncome)} />
+                <StatementRow label="Estimated payroll tax" amount={projectionData.payrollTax} percentage={percentOf(projectionData.payrollTax, projectionInputs.grossWages)} />
+                <StatementRow label="Estimated total tax" amount={projectionData.totalLiability} highlight separator />
+              </section>
+            </div>
+
+            <div className="tax-statement-summary">
+              <div className="tax-summary-pill">
+                <span>Effective rate</span>
+                <strong>{projectionData.effectiveRate}%</strong>
+              </div>
+              <div className="tax-summary-pill">
+                <span>Quarterly estimate</span>
+                <strong>{formatMoney(projection.quarterlyEstimatedPayment)}</strong>
+              </div>
+              <div className={`tax-summary-pill ${balanceTone}`}>
+                <span>{remainingBalance >= 0 ? 'Projected balance due' : 'Projected refund'}</span>
+                <strong>{formatSignedMoney(remainingBalance)}</strong>
+              </div>
+            </div>
           </div>
-          <div className="stat-card">
-            <div className="stat-label">Payroll tax (SS + Medicare)</div>
-            <div className="stat-value">{formatMoney(projection.projection.payrollTax)}</div>
-          </div>
-          <div className="stat-card">
-            <div className="stat-label">Total projected liability</div>
-            <div className="stat-value">{formatMoney(projection.projection.totalLiability)}</div>
-          </div>
-          <div className="stat-card">
-            <div className="stat-label">Withheld / paid so far</div>
-            <div className="stat-value">{formatMoney(projection.projection.totalWithheld)}</div>
-          </div>
-          <div className="stat-card">
-            <div className="stat-label">Balance due / (refund)</div>
-            <div className="stat-value">{formatMoney(projection.projection.balanceDue)}</div>
-          </div>
-          <div className="stat-card">
-            <div className="stat-label">Quarterly estimated payment</div>
-            <div className="stat-value">{formatMoney(projection.quarterlyEstimatedPayment)}</div>
-          </div>
-          <div className="stat-card">
-            <div className="stat-label">Effective tax rate</div>
-            <div className="stat-value">{projection.projection.effectiveRate}%</div>
-          </div>
-          <div className="stat-card">
-            <div className="stat-label">Deduction used</div>
-            <div className="stat-value">{formatMoney(projection.projection.deductionUsed)}{projection.projection.itemizing ? ' (itemized)' : ' (standard)'}</div>
-          </div>
-        </div>
+        </>
       )}
 
       {projection && projection.projection.stateTaxBreakdown.length > 0 && (

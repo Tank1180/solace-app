@@ -1,0 +1,9 @@
+node_modules/
+dist/
+*.zip
+finance-app-deploy/
+finance-app/server/finance.db
+finance-app/server/finance.db-shm
+finance-app/server/finance.db-wal
+.env
+.env.local

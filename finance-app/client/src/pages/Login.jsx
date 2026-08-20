@@ -31,6 +31,9 @@ export default function Login() {
         <div className="auth-brand">
           <img src="/solace-logo.png" alt="Solace" className="auth-brand-logo" />
         </div>
+        <div className="auth-links auth-links-left">
+          <Link to="/">Back to home</Link>
+        </div>
         <h1>Log in</h1>
         {error && <div className="error">{error}</div>}
         <label>Email
